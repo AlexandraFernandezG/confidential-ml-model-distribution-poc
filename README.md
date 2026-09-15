@@ -113,17 +113,43 @@ kubectl apply -f k8s/rbac-consumer.yaml
 ./scripts/create-secret.sh out confidential-ml-poc model-decryption-key
 ```
 
-### 3. Consumer: build, push, and deploy
+### 3. Consumer: build and deploy
+
+First, set `HF_REPO_ID` in `k8s/pod-consumer.yaml` to the repo you pushed
+to in step 1 (e.g. `your-hf-username/bert-tiny-encrypted`).
+
+#### Option A - local cluster only
+
+e.g. Docker Desktop's built-in Kubernetes. No registry needed, *if* your
+cluster's nodes share an image store with your local Docker Engine (this
+isn't guaranteed - some Docker Desktop versions run Kubernetes nodes with
+an isolated containerd, in which case you'll hit `ErrImageNeverPull` and
+need Option B instead). To try it, edit `k8s/pod-consumer.yaml` and set:
+
+```yaml
+image: confidential-ml-consumer:latest
+imagePullPolicy: Never
+```
+
+then:
+
+```bash
+docker build -t confidential-ml-consumer:latest consumer/
+kubectl apply -f k8s/pod-consumer.yaml
+kubectl logs -f consumer -n confidential-ml-poc
+```
+
+#### Option B - remote/real cluster (default in this repo)
+
+`k8s/pod-consumer.yaml` ships with
+`image: <your-registry>/confidential-ml-consumer:latest` and
+`imagePullPolicy: IfNotPresent`. Replace `<your-registry>` with your
+actual registry/username (e.g. your Docker Hub username), in both the
+commands below and in the manifest's `image` field, then build and push:
 
 ```bash
 docker build -t <your-registry>/confidential-ml-consumer:latest consumer/
 docker push <your-registry>/confidential-ml-consumer:latest
-```
-
-Update `k8s/pod-consumer.yaml`'s `image` and `HF_REPO_ID` placeholders to
-match, then:
-
-```bash
 kubectl apply -f k8s/pod-consumer.yaml
 kubectl logs -f consumer -n confidential-ml-poc
 ```

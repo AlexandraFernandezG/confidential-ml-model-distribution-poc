@@ -8,11 +8,12 @@ spec:
   restartPolicy: Never
   containers:
     - name: consumer
-      image: REPLACE_ME/confidential-ml-consumer:latest
+      image: <your-registry>/confidential-ml-consumer:latest
+      imagePullPolicy: IfNotPresent
       command: ["sh", "-c"]
       args:
         - >
-          python src/fetch_artifact.py --repo-id "$(HF_REPO_ID)" &&
+          python src/fetch_artifact.py --repo-id "$HF_REPO_ID" &&
           python src/decrypt.py &&
           python src/load_model.py
       env:
