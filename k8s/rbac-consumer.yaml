@@ -1,0 +1,29 @@
+# Note: a volume-mounted Secret is read by the kubelet, not via the
+# Kubernetes API, so this Role isn't strictly required for the mount in
+# pod-consumer.yaml to work. It's included anyway as defense-in-depth and
+# to make the intended access boundary explicit: consumer-sa can only
+# ever `get` this one named Secret, nothing else in the namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: consumer-secret-reader
+  namespace: confidential-ml-poc
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["model-decryption-key"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: consumer-secret-reader-binding
+  namespace: confidential-ml-poc
+subjects:
+  - kind: ServiceAccount
+    name: consumer-sa
+    namespace: confidential-ml-poc
+roleRef:
+  kind: Role
+  name: consumer-secret-reader
+  apiGroup: rbac.authorization.k8s.io
