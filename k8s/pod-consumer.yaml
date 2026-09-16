@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: consumer
+  namespace: confidential-ml-poc
+spec:
+  serviceAccountName: consumer-sa
+  restartPolicy: Never
+  containers:
+    - name: consumer
+      image: <your-registry>/confidential-ml-consumer:latest
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      args:
+        - >
+          python src/fetch_artifact.py --repo-id "$HF_REPO_ID" &&
+          python src/decrypt.py &&
+          python src/load_model.py
+      env:
+        - name: HF_REPO_ID
+          value: "REPLACE_ME/bert-tiny-encrypted"
+      volumeMounts:
+        - name: decryption-key
+          mountPath: /mnt/secrets
+          readOnly: true
+  volumes:
+    - name: decryption-key
+      secret:
+        secretName: model-decryption-key
+        defaultMode: 0440
