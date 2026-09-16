@@ -16,6 +16,9 @@ repo is structured so they can be added later without reworking Layer 1.
 | 2 - Signing & verification | Not implemented ([layer2/](layer2/)) | Producer signs the encrypted artifact; Consumer verifies before decrypting |
 | 3 - Attested key release | Not implemented ([layer3/](layer3/)) | Kata + CoCo, Trustee KBS, and Confidential Data Hub replace the Secret with attestation-gated key release |
 
+## Diagram (Layer 1)
+![Conceptual Architecture](diagrams/diagram_layer_1.png)
+
 ## Architecture (Layer 1)
 
 ```
