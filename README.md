@@ -16,6 +16,9 @@ structured so it can be added later without reworking Layers 1-2.
 | 2 - Signing & verification | **Implemented** ([layer2/](layer2/)) | Producer signs the encrypted artifact with Ed25519; Consumer verifies against a Control-Plane-delivered public key before decrypting, aborting on failure |
 | 3 - Attested key release | Not implemented ([layer3/](layer3/)) | Kata + CoCo, Trustee KBS, and Confidential Data Hub replace the Secret with attestation-gated key release |
 
+## Diagram (Layer 1)
+![Conceptual Architecture](diagrams/diagram_layer_1.png)
+
 ## Architecture (Layer 1)
 
 ```
