@@ -1,0 +1,30 @@
+# Template only - do NOT apply this file as-is.
+#
+# In practice this ConfigMap is created imperatively by
+# scripts/create-configmap.sh (the Control Plane/CI step) directly from the
+# producer_ed25519.pub file produced by layer2/producer/src/generate_keys.py:
+#
+#   kubectl create configmap model-verification-key \
+#     --namespace confidential-ml-poc \
+#     --from-file=producer_ed25519.pub=out/producer_ed25519.pub
+#
+# This is a ConfigMap, not a Secret, because the public key is not secret
+# data - only the corresponding private key (which never leaves the
+# Producer/Control Plane) needs confidentiality. Delivering it this way,
+# from the Control Plane rather than alongside the artifact on Hugging Face
+# Hub, keeps the verification key on a channel independent of the one the
+# signed artifact travels over (see layer2/README.md for the full
+# rationale).
+#
+# This declarative form is kept here only as a reference for what that
+# command produces (placeholder value below, not a real key).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-verification-key
+  namespace: confidential-ml-poc
+data:
+  producer_ed25519.pub: |
+    -----BEGIN PUBLIC KEY-----
+    REPLACE_ME
+    -----END PUBLIC KEY-----

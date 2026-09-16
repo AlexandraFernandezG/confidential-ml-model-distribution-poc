@@ -14,6 +14,7 @@ spec:
       args:
         - >
           python src/fetch_artifact.py --repo-id "$HF_REPO_ID" &&
+          python layer2/src/verify_signature.py --repo-id "$HF_REPO_ID" &&
           python src/decrypt.py &&
           python src/load_model.py
       env:
@@ -23,8 +24,15 @@ spec:
         - name: decryption-key
           mountPath: /mnt/secrets
           readOnly: true
+        - name: verification-key
+          mountPath: /mnt/publickey
+          readOnly: true
   volumes:
     - name: decryption-key
       secret:
         secretName: model-decryption-key
         defaultMode: 0440
+    - name: verification-key
+      configMap:
+        name: model-verification-key
+        defaultMode: 0444

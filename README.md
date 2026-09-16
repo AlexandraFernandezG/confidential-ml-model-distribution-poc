@@ -6,14 +6,14 @@ Proof-of-concept for a confidential LLM model delivery pipeline: a
 never letting the plaintext model or the decryption key leave a trusted
 boundary unnecessarily.
 
-The project has three progressive layers. Only **Layer 1** is implemented
-here; Layers 2 and 3 are optional and independent of each other, and the
-repo is structured so they can be added later without reworking Layer 1.
+The project has three progressive layers. **Layers 1 and 2** are
+implemented; Layer 3 is optional and independent, and the repo is
+structured so it can be added later without reworking Layers 1-2.
 
 | Layer | Status | Adds |
 |---|---|---|
 | 1 - Encrypted distribution | **Implemented** | AES-256-GCM encryption, Hugging Face Hub as transport, key delivered via a Kubernetes Secret |
-| 2 - Signing & verification | Not implemented ([layer2/](layer2/)) | Producer signs the encrypted artifact; Consumer verifies before decrypting |
+| 2 - Signing & verification | **Implemented** ([layer2/](layer2/)) | Producer signs the encrypted artifact with Ed25519; Consumer verifies against a Control-Plane-delivered public key before decrypting, aborting on failure |
 | 3 - Attested key release | Not implemented ([layer3/](layer3/)) | Kata + CoCo, Trustee KBS, and Confidential Data Hub replace the Secret with attestation-gated key release |
 
 ## Architecture (Layer 1)
@@ -52,6 +52,28 @@ Control Plane / CI (scripts/create-secret.sh)
 ```
 
 See `docs/layer1-architecture.png` for a visual diagram.
+
+## Architecture (Layer 2, optional)
+
+```
+Producer                     Hugging Face Hub       Consumer (pod)
+--------                     -----------------      ---------------
+generate_keys.py                                    fetch_artifact.py (unchanged)
+  Ed25519 keypair                                      |
+sign_artifact.py                                    verify_signature.py
+  signs model.tar.enc         model.tar.enc.sig ---->  verifies against mounted
+  uploads .sig  ------------------------------------>  public key
+                                                         |  FAIL -> abort (exit non-zero)
+Control Plane (create-configmap.sh)                     |  PASS -> continue
+  publishes public key ------------------------------>  decrypt.py, load_model.py
+  via ConfigMap (not a Secret -                          (unchanged)
+  not secret data)
+```
+
+The public key is delivered via a Kubernetes ConfigMap from the Control
+Plane, **not** published to Hugging Face Hub alongside the artifact - see
+[layer2/README.md](layer2/README.md) for why that channel separation is
+what makes verification meaningful.
 
 Key points:
 
@@ -166,6 +188,28 @@ python src/decrypt.py --artifact-path ../out/model.tar.enc --key-path ../out/enc
 python src/load_model.py --tar-path ../out/model.tar --extract-dir ../out/model
 ```
 
+### 4. Layer 2 (optional): sign, publish the verification key, and verify
+
+Run after step 1 (producer) and before/alongside step 3 (consumer). Full
+commands are in [layer2/README.md](layer2/README.md); summary:
+
+```bash
+# Producer: generate keys and sign the artifact from step 1
+python layer2/producer/src/generate_keys.py --out-dir out
+python layer2/producer/src/sign_artifact.py --repo-id <your-hf-username>/bert-tiny-encrypted --out-dir out
+
+# Control Plane: publish the public key (parallel to create-secret.sh)
+./scripts/create-configmap.sh out confidential-ml-poc model-verification-key
+
+# Consumer image: layer the Layer 2 scripts on top of the Layer 1 image
+docker build -t confidential-ml-consumer:latest consumer/
+docker build -t confidential-ml-consumer:latest layer2/consumer/
+```
+
+`k8s/pod-consumer.yaml` already runs `verify_signature.py` between
+`fetch_artifact.py` and `decrypt.py`, and mounts the verification-key
+ConfigMap - no further manifest changes needed once the above is applied.
+
 ## Verifying each layer works
 
 ### Layer 1 (implemented)
@@ -184,12 +228,30 @@ python src/load_model.py --tar-path ../out/model.tar --extract-dir ../out/model
   re-run it - it should raise `cryptography.exceptions.InvalidTag` and
   exit non-zero rather than producing corrupted model output.
 
-### Layer 2 / Layer 3 (not implemented)
+### Layer 2 (implemented)
 
-Not built in this repo - see [layer2/README.md](layer2/README.md) and
-[layer3/README.md](layer3/README.md) for what verification would look
-like once added (signature check before decrypting; attestation-gated key
-release from the KBS instead of a mounted Secret).
+- **Verification key exists and is scoped correctly:**
+  `kubectl get configmap model-verification-key -n confidential-ml-poc`
+  should show `Data: producer_ed25519.pub`. Unlike the decryption-key
+  Secret, this doesn't need an RBAC read-restriction check - the public
+  key isn't secret.
+- **End-to-end pipeline succeeded:** `kubectl logs consumer -n confidential-ml-poc`
+  should include `Signature verification OK. Proceeding to decrypt.py.`
+  before the decrypt/load lines - this only happens if `verify_signature.py`
+  found a valid signature.
+- **Tampering is actually caught, and decrypt.py never runs:** run
+  `./layer2/scripts/demo-tamper.sh <your-hf-username>/bert-tiny-encrypted`
+  (or corrupt `model.tar.enc` / `model.tar.enc.sig` by hand and re-run
+  `verify_signature.py`) - it should print
+  `SIGNATURE VERIFICATION FAILED` and exit non-zero, and `decrypt.py`
+  should not execute. See [layer2/README.md](layer2/README.md) for the
+  full walkthrough.
+
+### Layer 3 (not implemented)
+
+Not built in this repo - see [layer3/README.md](layer3/README.md) for
+what attestation-gated key release would look like once added (the KBS
+replaces the mounted Secret).
 
 ## Scale note
 
@@ -205,9 +267,9 @@ a base nonce, so the whole model never has to fit in memory at once.
 .
 ├── producer/    Layer 1: select model, encrypt, push to HF Hub
 ├── consumer/    Layer 1: fetch, decrypt, load + smoke-test inference
-├── k8s/         Namespace, ServiceAccount, RBAC, Secret template, Pod spec
-├── scripts/     Control Plane/CI step: create-secret.sh
-├── docs/        Architecture diagram
-├── layer2/      Placeholder: signing & verification (optional, not implemented)
+├── layer2/      Layer 2 (optional, implemented): sign artifact, verify before decrypt
+├── k8s/         Namespace, ServiceAccount, RBAC, Secret + ConfigMap templates, Pod spec
+├── scripts/     Control Plane/CI steps: create-secret.sh, create-configmap.sh
+├── diagrams/    Architecture diagram
 └── layer3/      Placeholder: attested key release via CoCo (optional, not implemented)
 ```
