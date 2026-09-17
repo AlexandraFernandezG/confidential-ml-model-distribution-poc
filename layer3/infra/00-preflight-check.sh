@@ -55,8 +55,14 @@ else
 fi
 
 # 3. containerd is the active CRI (not CRI-O, not dockershim).
+# crictl needs root to read containerd's socket by default, so use sudo
+# when not already running as root.
 if command -v crictl >/dev/null 2>&1; then
-  RUNTIME_INFO="$(crictl info 2>/dev/null | grep -i '"runtimeName"' || true)"
+  CRICTL_CMD="crictl"
+  if [[ "$(id -u)" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
+    CRICTL_CMD="sudo crictl"
+  fi
+  RUNTIME_INFO="$(${CRICTL_CMD} info 2>/dev/null | grep -i '"runtimeName"' || true)"
   if echo "$RUNTIME_INFO" | grep -qi containerd; then
     pass "containerd is the active CRI"
   elif [[ -n "$RUNTIME_INFO" ]]; then
