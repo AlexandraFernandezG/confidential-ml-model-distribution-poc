@@ -45,7 +45,11 @@ echo "Deploying KBS (dev/test mode, NodePort) into namespace '${NAMESPACE}'..."
 echo "Waiting for the kbs deployment to become ready..."
 kubectl rollout status deployment/kbs -n "$NAMESPACE" --timeout=300s
 
-KBS_HOST="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')"
+# Filter explicitly for InternalIP rather than taking addresses[0] - node
+# address ordering isn't guaranteed, and a Hostname-type entry (e.g. an
+# EC2 instance's "ip-10-0-1-23.ec2.internal") may not be resolvable from
+# wherever kbs-client or the pod's Kata guest agent run.
+KBS_HOST="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')"
 KBS_PORT="$(kubectl get svc kbs -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].nodePort}')"
 
 if [[ -z "$KBS_HOST" || -z "$KBS_PORT" ]]; then

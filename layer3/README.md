@@ -50,9 +50,35 @@ exits non-zero with a specific remediation hint for whatever fails.
 If your target is a **local VM on a Windows/Mac host** (VirtualBox,
 VMware, Hyper-V), nested virtualization must be turned on in the
 *hypervisor*, not just inside the guest:
-- **Hyper-V**: from the Windows host (VM stopped): `Set-VMProcessor -VMName <vm> -ExposeVirtualizationExtensions $true`
+- **Hyper-V**: from the Windows host (VM stopped): `Set-VMProcessor -VMName <vm> -ExposeVirtualizationExtensions $true` (requires Windows Pro/Enterprise/Education - not available on Windows Home)
 - **VMware Workstation/Fusion**: enable "Virtualize Intel VT-x/EPT or AMD-V/RVI" in the VM's CPU settings
 - **VirtualBox**: enable "Enable Nested VT-x/AMD-V" in the VM's System > Processor settings
+
+If your target is an **AWS EC2 Ubuntu Server instance**, nested
+virtualization is an instance CPU option, not a VM setting - AWS added
+support for it on regular (non-bare-metal) instances in Feb 2026. Launch
+a supported x86_64 instance type (`M7i`/`M7i-flex`/`M8i`/`C7i`/`C7i-flex`/`C8i`/
+`R7i`/`R8i`/etc. - Graviton is not supported) with nested virtualization
+enabled:
+
+```bash
+aws ec2 run-instances \
+    --image-id <ubuntu-22.04-ami-id> \
+    --instance-type m7i.2xlarge \
+    --cpu-options "NestedVirtualization=enabled" \
+    --key-name <your-key-pair>
+```
+
+Or via the console: Launch Instance wizard -> Advanced details -> Nested
+virtualization -> Enable. Alternatively, any `.metal` bare-metal instance
+type (e.g. `m5.metal`) exposes `/dev/kvm` with no special CPU option at
+all, since there's no hypervisor layer above it - simpler but pricier.
+Either way, verify with `kvm-ok` after boot (`sudo apt install cpu-checker`)
+before running `00-preflight-check.sh`. See the
+[AWS nested virtualization docs](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html)
+for the full instance-type list and region availability. You'll also need
+an inbound Security Group rule for the KBS NodePort (typically in the
+`30000-32767` range) once you reach `02-deploy-kbs.sh`.
 
 ## Version pins
 
