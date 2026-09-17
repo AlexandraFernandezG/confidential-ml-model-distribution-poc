@@ -60,6 +60,14 @@ done
 echo "Installing CoCo operator (${OPERATOR_VERSION})..."
 kubectl apply -k "github.com/confidential-containers/operator/config/release?ref=${OPERATOR_VERSION}"
 
+# The v0.10.0 manifest references gcr.io/kubebuilder/kube-rbac-proxy:v0.13.1,
+# which was removed upstream (GCR deprecation) and now 404s. Patch it to the
+# original quay.io/brancz image at the same tag - a safe drop-in replacement,
+# since the gcr.io copy was only ever a mirror of it.
+echo "Patching kube-rbac-proxy sidecar image (gcr.io/kubebuilder/kube-rbac-proxy was removed upstream)..."
+kubectl -n confidential-containers-system set image deployment/cc-operator-controller-manager \
+  kube-rbac-proxy=quay.io/brancz/kube-rbac-proxy:v0.13.1
+
 echo "Waiting for the operator deployment to become ready..."
 kubectl rollout status deployment/cc-operator-controller-manager \
   -n confidential-containers-system --timeout=300s

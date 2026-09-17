@@ -48,10 +48,18 @@ else
   ORAS="${BIN_DIR}/oras"
 fi
 
+# Resolve ORAS to an absolute path before the cd below, so a relative
+# path (e.g. out/bin/oras) doesn't get mis-resolved against the new cwd.
+case "$ORAS" in
+  /*) : ;;
+  */*) ORAS="$(cd "$(dirname "$ORAS")" && pwd)/$(basename "$ORAS")" ;;
+  *) ORAS="$(command -v "$ORAS")" ;;
+esac
+
 echo "Pulling kbs-client via ORAS from ${KBS_CLIENT_REF}..."
 (
   cd "$BIN_DIR"
-  "$(cd "$(dirname "$ORAS")" && pwd)/$(basename "$ORAS")" pull "$KBS_CLIENT_REF"
+  "$ORAS" pull "$KBS_CLIENT_REF"
 )
 
 if [[ ! -f "${BIN_DIR}/kbs-client" ]]; then

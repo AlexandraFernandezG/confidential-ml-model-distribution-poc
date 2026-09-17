@@ -36,6 +36,18 @@ else
     https://github.com/confidential-containers/trustee.git "$TRUSTEE_SRC"
 fi
 
+# deploy-kbs.sh requires this file to exist - it's a Trustee-bundled
+# sample resource (pre-seeded into KBS's repository at
+# reponame/workload_key/key.bin for smoke-testing), unrelated to the
+# Layer 3 decryption key set later by 04-set-resource.sh. Its content
+# doesn't matter, only that it exists.
+ARCH="$(uname -m)"
+KEY_BIN="${TRUSTEE_SRC}/kbs/config/kubernetes/overlays/${ARCH}/key.bin"
+if [[ ! -f "$KEY_BIN" ]]; then
+  echo "Generating placeholder key.bin (Trustee sample resource, unrelated to the Layer 3 decryption key)..."
+  openssl rand -out "$KEY_BIN" 32
+fi
+
 echo "Deploying KBS (dev/test mode, NodePort) into namespace '${NAMESPACE}'..."
 (
   cd "${TRUSTEE_SRC}/kbs/config/kubernetes"
