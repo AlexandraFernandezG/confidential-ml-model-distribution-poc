@@ -62,11 +62,14 @@ if command -v crictl >/dev/null 2>&1; then
   if [[ "$(id -u)" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
     CRICTL_CMD="sudo crictl"
   fi
-  RUNTIME_INFO="$(${CRICTL_CMD} info 2>/dev/null | grep -i '"runtimeName"' || true)"
-  if echo "$RUNTIME_INFO" | grep -qi containerd; then
+  # Newer crictl versions dropped the top-level "runtimeName" field from
+  # 'info' output, so check for "containerdEndpoint" (only present when
+  # containerd is the configured CRI) too, not just the older field.
+  RUNTIME_INFO="$(${CRICTL_CMD} info 2>/dev/null || true)"
+  if echo "$RUNTIME_INFO" | grep -qi '"runtimeName": *"containerd"' || echo "$RUNTIME_INFO" | grep -q '"containerdEndpoint"'; then
     pass "containerd is the active CRI"
   elif [[ -n "$RUNTIME_INFO" ]]; then
-    fail "active CRI does not look like containerd: ${RUNTIME_INFO}" \
+    fail "active CRI does not look like containerd (checked 'crictl info' output)" \
          "kata-qemu-coco-dev requires containerd, not CRI-O or dockershim"
   else
     fail "could not determine the active CRI via 'crictl info'" \
