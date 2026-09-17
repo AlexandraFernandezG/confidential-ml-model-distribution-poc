@@ -72,8 +72,12 @@ Run after the Layer 1 producer steps (`select_and_encrypt.py`,
 cd layer2/producer
 pip install -r requirements.txt
 python src/generate_keys.py --out-dir ../../out
-python src/sign_artifact.py --repo-id <your-hf-username>/bert-tiny-encrypted --out-dir ../../out
+python src/sign_artifact.py --repo-id <your-hf-username>/bert-tiny-encrypted --artifact-path ../../out/model.tar.enc --private-key-path ../../out/producer_ed25519.key --out-dir ../../out
 ```
+
+`--artifact-path`/`--private-key-path` must be passed explicitly here (their
+defaults are `out/...`, resolved against the current directory, not against
+`--out-dir` - same pattern as Layer 1's `push_artifact.py --artifact-path`).
 
 `../../out/producer_ed25519.key` stays local - do not commit or upload it.
 `../../out/producer_ed25519.pub` is handed to the Control Plane next.
@@ -83,7 +87,7 @@ Or as a container, layered on top of the Layer 1 producer image:
 ```bash
 docker build -t confidential-ml-producer-l2 layer2/producer/
 docker run --rm -v "$PWD/out:/out" confidential-ml-producer-l2 src/generate_keys.py --out-dir /out
-docker run --rm -v "$PWD/out:/out" -e HF_TOKEN confidential-ml-producer-l2 src/sign_artifact.py --repo-id <your-hf-username>/bert-tiny-encrypted --out-dir /out
+docker run --rm -v "$PWD/out:/out" -e HF_TOKEN confidential-ml-producer-l2 src/sign_artifact.py --repo-id <your-hf-username>/bert-tiny-encrypted --artifact-path /out/model.tar.enc --private-key-path /out/producer_ed25519.key --out-dir /out
 ```
 
 ### 2. Control Plane/CI: publish the verification key to the cluster
@@ -124,9 +128,21 @@ python src/verify_signature.py --repo-id <your-hf-username>/bert-tiny-encrypted 
 
 ## Demonstrating the abort-on-tampered-artifact case
 
-After running the producer and consumer steps above at least once (so a
-valid signed artifact exists on the Hub and `out/producer_ed25519.pub`
-exists locally):
+Requires, from the repo root, `out/model.tar.enc` + `out/model.tar.enc.sig`
+already pushed to the Hub and `out/producer_ed25519.pub` present locally.
+If you haven't run the producer steps yet:
+
+```bash
+cd producer
+python src/select_and_encrypt.py --out-dir ../out
+python src/push_artifact.py --repo-id <your-hf-username>/bert-tiny-encrypted --artifact-path ../out/model.tar.enc
+cd ../layer2/producer
+python src/generate_keys.py --out-dir ../../out
+python src/sign_artifact.py --repo-id <your-hf-username>/bert-tiny-encrypted --artifact-path ../../out/model.tar.enc --private-key-path ../../out/producer_ed25519.key --out-dir ../../out
+cd ../..
+```
+
+Then, from the repo root:
 
 ```bash
 ./layer2/scripts/demo-tamper.sh <your-hf-username>/bert-tiny-encrypted
@@ -137,7 +153,7 @@ the local copy, and re-runs verification against the corrupted copy,
 showing it exits non-zero with a `SIGNATURE VERIFICATION FAILED` message
 instead of proceeding.
 
-To reproduce it by hand instead:
+To reproduce it by hand instead (also from the repo root):
 
 ```bash
 python consumer/src/fetch_artifact.py --repo-id <your-hf-username>/bert-tiny-encrypted --out-dir out
