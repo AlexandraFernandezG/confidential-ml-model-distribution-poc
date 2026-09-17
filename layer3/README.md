@@ -223,6 +223,121 @@ that `fetch_key_kbs.py` printed `KEY RELEASE FAILED` and the container
 exited non-zero - `decrypt.py` never ran. It restores the real permissive
 policy afterward regardless of outcome.
 
+## Troubleshooting
+
+Issues actually hit while bringing this up from scratch on a real host
+(a single-node kubeadm cluster on a cloud VM), roughly in the order
+you're likely to hit them. None of these are specific to one cloud
+provider - they come from CoCo/containerd version interactions.
+
+**Infra scripts fail with `Permission denied`.**
+Missing executable bit - common right after a fresh clone if the bit
+didn't survive however the files got onto the host (e.g. authored on a
+platform that doesn't track it, or copied rather than `git clone`d after
+committing the mode). Fix: `chmod +x layer3/infra/*.sh layer3/scripts/*.sh`.
+Committing with the executable bit set (`git update-index --chmod=+x <file>`)
+avoids this on future clones.
+
+**`00-preflight-check.sh` reports `could not determine the active CRI via
+'crictl info'` even though containerd is genuinely running.**
+Two independent causes: `crictl` needs root to read containerd's socket
+(the check must shell out via `sudo` when not already root), and newer
+`crictl` versions dropped the top-level `"runtimeName"` field from `info`'s
+JSON output entirely, so grepping for it always comes up empty regardless
+of your setup. Confirm manually with `sudo crictl info` and look for a
+`"containerdEndpoint"` field in the output instead.
+
+**CoCo operator's `kube-rbac-proxy` sidecar stuck in `ImagePullBackOff`,
+blocking `01-install-coco-operator.sh`'s rollout wait.**
+The v0.10.0 operator manifest references `gcr.io/kubebuilder/kube-rbac-proxy`,
+which was deprecated and removed from GCR upstream (unrelated to CoCo -
+this affects every project that scaffolded with older kubebuilder). Fix:
+patch the deployment to the original `quay.io/brancz/kube-rbac-proxy` at
+the same tag - a safe drop-in, since the gcr.io copy was only ever a
+mirror of it.
+
+**`cc-operator-daemon-install` pod shows `Evicted`.**
+Check `kubectl describe node <node> | grep -A5 Conditions` for
+`DiskPressure: True`. Default cloud-instance root volumes (often 8-20GB)
+don't have enough headroom for Kubernetes + containerd + the Kata
+kernel/rootfs/QEMU artifacts the daemonset installs. Resize the root
+volume (well beyond the assignment's minimum - 40-50GB is comfortable)
+and grow the filesystem online (`growpart` + `resize2fs` on Linux), then
+delete the evicted pod so the DaemonSet retries.
+
+**Pod stuck on `FailedCreatePodSandBox: no runtime for "kata-qemu-coco-dev"
+is configured`, even though `kubectl get runtimeclass` lists it.**
+The RuntimeClass Kubernetes object existing doesn't mean containerd has
+actually loaded a matching runtime handler - containerd does not hot-reload
+newly-written runtime config from `/etc/containerd/config.toml`. If the
+daemonset's config.toml patch lands after containerd's last start, you
+need `sudo systemctl restart containerd` *after* the daemonset finishes
+(check `kubectl get pods -n confidential-containers-system` for the
+install pod reaching a steady state first). Confirm the fix actually took
+by checking what containerd logged at startup, not just the file on disk:
+```
+sudo journalctl -u containerd --no-pager --since "2 minutes ago" | grep "starting cri plugin"
+```
+The printed JSON's `"runtimes"` key should include `"kata-qemu-coco-dev"`.
+
+**Same error persists after restarting containerd, and the file clearly
+has the right block.**
+On containerd 2.x (config `version = 3` at the top of `config.toml`), the
+CRI plugin's config moved from the legacy `[plugins.cri.containerd.runtimes.*]`
+path to `[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.*]`.
+The v0.10.0 CoCo operator predates this change and writes the old path,
+which containerd 2.x silently ignores (it's valid TOML, just under a
+plugin ID nothing reads). Verify with `containerd --version` and check
+`head -5 /etc/containerd/config.toml` for `version = 3`; if so, manually
+append a copy of the runtime block(s) you need under the new plugin path,
+verify with `containerd config dump | grep -A10 <runtime-name>`, then
+restart containerd and re-check the startup log as above. This is a
+manual, non-persistent patch - if the operator's daemonset ever
+reconciles the file again, it will likely rewrite only the legacy path.
+
+**Container fails with `StartError` and a stack trace ending in
+`No space left on device (os error 28)` while unpacking a layer (often a
+large one, e.g. containing `torch`).**
+This is the Kata guest VM's own storage, not your host disk - `kata-qemu-coco-dev`
+uses `guest-pull`, so image layers are unpacked *inside* the confidential
+VM, and Kata's default guest memory (`default_memory = 2048` MiB, backing
+a RAM-based filesystem) can be too small for a large layer. Check the
+current default in `/opt/kata/share/defaults/kata-containers/configuration-qemu-coco-dev.toml`,
+confirm `default_memory` is in that file's `enable_annotations` list, and
+override it per-pod (no global config edit needed) via:
+```yaml
+io.katacontainers.config.hypervisor.default_memory: "4096"
+```
+in the pod's annotations. Increase further if a larger image still fails.
+
+**`HFValidationError: Repo id must use alphanumeric chars ...: ''`.**
+`HF_REPO_ID` in the pod manifest is empty - the placeholder value was
+never actually replaced (or got cleared while editing something else
+nearby), not an attestation/KBS problem.
+
+**`401 Client Error: Unauthorized` fetching an artifact from a public HF
+repo.** A public repo needs no token, but `huggingface_hub` will still use
+one if it finds it and fail loudly on an invalid one. Check for a stray or
+incorrect `HF_TOKEN` reaching the pod (an env var you added and forgot to
+remove, for instance) rather than assuming the repo needs to be public in
+the first place.
+
+**A rebuilt/repushed image still seems to be missing new files
+(`python: can't open file '.../fetch_key_kbs.py': No such file or
+directory`) even though the local image has them.**
+`imagePullPolicy: IfNotPresent` combined with a mutable `:latest` tag
+means the node reuses whatever it already pulled under that tag and never
+notices the registry has a newer image. Force a fresh pull with
+`sudo crictl rmi <image>` before redeploying, or switch to
+`imagePullPolicy: Always` while iterating on the image (switch back
+afterward if you want faster restarts once you're done).
+
+**`docker push` fails with `failed commit on net/http: timeout awaiting
+response headers`.** Transient - large layers (e.g. from `torch`) can hit
+upload timeouts on a flaky connection or through a VPN. Already-pushed
+layers aren't re-uploaded, so just retry the push; restart your local
+Docker daemon first if it keeps failing.
+
 ## Security disclaimers
 
 - **The dev/test KBS deployment is not production-grade**: no TLS between
