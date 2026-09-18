@@ -1,0 +1,51 @@
+# Layer 3 consumer pod - runs under kata-qemu-coco-dev (a real QEMU/KVM
+# confidential-style micro-VM) instead of the default runc runtime, and
+# fetches its decryption key from KBS via the Confidential Data Hub (CDH)
+# instead of a mounted Kubernetes Secret.
+#
+# Reuses, unchanged, from Layer 1/2:
+#   - namespace confidential-ml-poc      (k8s/namespace.yaml)
+#   - ServiceAccount consumer-sa         (k8s/serviceaccount-consumer.yaml, k8s/rbac-consumer.yaml)
+#   - ConfigMap model-verification-key   (k8s/configmap-public-key.yaml, scripts/create-configmap.sh)
+#
+# Does NOT use k8s/secret-decryption-key.yaml / scripts/create-secret.sh -
+# the decryption key comes from KBS instead (see layer3/infra/).
+#
+# Before applying: replace <KBS_HOST>/<KBS_PORT> below with the values
+# written to out/kbs-endpoint.env by layer3/infra/02-deploy-kbs.sh.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: consumer
+  namespace: confidential-ml-poc
+  annotations:
+    io.containerd.cri.runtime-handler: "kata-qemu-coco-dev"
+    io.katacontainers.config.hypervisor.kernel_params: " agent.aa_kbc_params=cc_kbc::http://<KBS_HOST>:<KBS_PORT>"
+spec:
+  runtimeClassName: kata-qemu-coco-dev
+  serviceAccountName: consumer-sa
+  restartPolicy: Never
+  containers:
+    - name: consumer
+      image: <your-registry>/confidential-ml-consumer:latest
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      args:
+        - >
+          python src/fetch_artifact.py --repo-id "$HF_REPO_ID" &&
+          python layer2/src/verify_signature.py --repo-id "$HF_REPO_ID" &&
+          python layer3/src/fetch_key_kbs.py &&
+          python src/decrypt.py --key-path /tmp/kbs-key/encryption.key --nonce-path /tmp/kbs-key/encryption.nonce &&
+          python src/load_model.py
+      env:
+        - name: HF_REPO_ID
+          value: "REPLACE_ME/bert-tiny-encrypted"
+      volumeMounts:
+        - name: verification-key
+          mountPath: /mnt/publickey
+          readOnly: true
+  volumes:
+    - name: verification-key
+      configMap:
+        name: model-verification-key
+        defaultMode: 0444
