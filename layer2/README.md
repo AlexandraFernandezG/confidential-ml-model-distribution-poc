@@ -117,6 +117,16 @@ tag as its own `FROM`, so build it after the first and re-tag the result -
 overwrites the tag with the layered image, which is what
 `k8s/pod-consumer.yaml` expects to pull.)
 
+The commands above assume **Option A** (local cluster, shared image
+store) from the top-level README's Layer 1 deploy instructions, which
+also requires setting `imagePullPolicy: Never` in `k8s/pod-consumer.yaml`.
+If you're on **Option B** (the manifest's actual default -
+`image: <your-registry>/confidential-ml-consumer:latest`,
+`imagePullPolicy: IfNotPresent`), tag both builds as
+`<your-registry>/confidential-ml-consumer:latest` instead and `docker push`
+the final layered image before `kubectl apply`-ing the manifest - see the
+top-level README's Option A/B breakdown for the full Layer 1 rationale.
+
 You can also run the consumer scripts locally against `out/` (as in
 Layer 1) to sanity-check before containerizing:
 
